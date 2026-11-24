@@ -180,9 +180,16 @@ ensure_fw_rule "Allow-crossdesk-turn-relay" "$relay_min-$relay_max" "tcp udp"
 /etc/init.d/firewall reload 2>/dev/null || log "WARNING: firewall reload failed; rules take effect after the next firewall restart."
 
 # Enable + restart coturn (its own UCI switch + init script).
-if ! uci -q get turnserver.general.enabled >/dev/null 2>&1; then
-	uci add turnserver general >/dev/null
-	uci rename turnserver.@general[-1] general
+# Do NOT use `uci add` + rename here: the coturn package already ships
+# a named `general` section, and renaming a second section onto that
+# name fails, which (with `set -e`) aborts this script before the
+# service is enabled — the config file is written but the service
+# stays disabled, and `/etc/init.d/turnserver start` then refuses
+# with "service not enabled in /etc/config/turnserver".
+# `uci set <config>.<section>=<type>` creates the named section when
+# it is missing and is a no-op otherwise.
+if ! uci -q get turnserver.general >/dev/null 2>&1; then
+	uci set turnserver.general=turnserver
 fi
 uci set turnserver.general.enabled='1'
 uci commit turnserver

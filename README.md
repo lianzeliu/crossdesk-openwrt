@@ -14,7 +14,7 @@ libgcc_s / libc），但只在 filogic 上验证过。
 | 包 | 说明 |
 |---|---|
 | `crossdesk-server` | 服务端二进制 + 管理页面（`/usr/share/crossdesk/admin`）+ procd 服务 + 默认配置 |
-| `luci-app-crossdesk-server` | LuCI 界面：基本设置、自定义 STUN、TURN（含本机 coturn 中转）、证书（自签 / Let's Encrypt 自动申请与续签）、高级设置。装它时会一起装上 `coturn`（中转）和 `acme`（证书） |
+| `luci-app-crossdesk-server` | LuCI 界面：基本设置、自定义 STUN、TURN（含本机 coturn 中转）、高级设置。装它时会一起装上 `coturn`（中转） |
 
 > `coturn` 来自 telephony feed。ImmortalWrt 默认 feeds 里有
 > telephony；如果你的 feeds 里没有，先加
@@ -50,16 +50,7 @@ luci-app-crossdesk-server_*.ipk`，或直接编进固件。
 ## 首次使用
 
 1. LuCI → 服务 → CrossDesk Server。
-2. 先弄证书（没有证书服务起不来，会直接拒绝启动并记一条日志）：
-   - **自签**：模式选“自签证书”，填好域名，点“生成自签证书”。
-     证书 10 年有效，SAN=DNS:域名。客户端要么装
-     `/etc/crossdesk/certs/api.crossdesk.cn_root.crt`
-     到受信任根证书里，要么用跳过自建校验的客户端版本。
-   - **Let's Encrypt**：模式选“Let's Encrypt”，填域名和邮箱，
-     点“申请证书”。要求域名解析到路由器 WAN 地址、且 TCP 80
-     端口能从互联网访问（HTTP-01）。acme.sh 会自己装 cron 做
-     自动续签，续签后自动重启服务；也可以在界面上点“续签证书”
-     立刻跑一次。
+2. 先确认证书在位（没有证书服务起不来，会直接拒绝启动并记一条日志）。证书是 `/etc/crossdesk/certs/` 下的 `api.crossdesk.cn_bundle.crt` + `api.crossdesk.cn.key`，用 openssl 手动生成、SAN=DNS:域名；客户端要么把根证书装进受信任根，要么用跳过自建校验的客户端版本。LuCI 里不提供证书生成功能。
 3. 配 STUN（默认已填 `stun.qq.com` 和 `stun.miwifi.com`）和
    TURN（直连失败才用得上，需要另外跑一个 coturn，见下节）。
 4. 勾“启用”，保存并应用，服务即启动。管理页面在

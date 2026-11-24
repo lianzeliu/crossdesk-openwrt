@@ -16,8 +16,6 @@ const callServiceList = rpc.declare({
 	expect: { '': {} }
 });
 
-const CERT_FILE = '/etc/crossdesk/certs/api.crossdesk.cn_bundle.crt';
-
 function getServiceStatus() {
 	return L.resolveDefault(callServiceList('crossdesk-server'), {}).then(function(res) {
 		return !!res?.['crossdesk-server']?.['instances']?.['crossdesk-server']?.['running'];
@@ -41,32 +39,6 @@ function serviceLine(name, running) {
 	const color = running ? 'green' : 'red';
 	const text = running ? _('RUNNING') : _('NOT RUNNING');
 	return '<em><span style="color:%s"><strong>%s %s</strong></span></em>'.format(color, name, text);
-}
-
-function getCertInfo() {
-	return L.resolveDefault(fs.exec('openssl', ['x509', '-in', CERT_FILE, '-noout', '-enddate']), {}).then(function(res) {
-		if (!res || res.code !== 0 || !res.stdout)
-			return null;
-		const m = res.stdout.match(/notAfter=(.+)/);
-		if (!m)
-			return null;
-		const date = new Date(m[1].trim());
-		if (isNaN(date.getTime()))
-			return null;
-		return date;
-	});
-}
-
-function formatCertInfo(date) {
-	if (!date)
-		return _('未生成证书（请先在下方生成自签证书或申请 Let\'s Encrypt 证书，否则服务无法启动）');
-	const days = Math.floor((date.getTime() - Date.now()) / 86400000);
-	const ds = date.getFullYear() + '-' + String(date.getMonth() + 1).padStart(2, '0') + '-' + String(date.getDate()).padStart(2, '0');
-	if (days < 0)
-		return _('证书已过期（到期日 %s）').format(ds);
-	if (days === 0)
-		return _('证书今天到期（%s）').format(ds);
-	return _('证书有效期至 %s（剩余 %d 天）').format(ds, days);
 }
 
 function runHelper(map, script, args, title, successMsg) {
@@ -94,15 +66,11 @@ function runHelper(map, script, args, title, successMsg) {
 
 return view.extend({
 	load: function() {
-		return Promise.all([
-			uci.load('crossdesk-server'),
-			getCertInfo()
-		]);
+		return uci.load('crossdesk-server');
 	},
 
 	render: function(data) {
 		let m, s, o;
-		const certDate = data[1];
 		const port = uci.get('crossdesk-server', 'global', 'port') || '9090';
 
 		m = new form.Map('crossdesk-server', _('CrossDesk Server'));
@@ -127,8 +95,7 @@ return view.extend({
 			return E('div', { 'class': 'cbi-section', 'id': 'status_bar' }, [
 				E('p', { 'id': 'crossdesk_status' }, _('Collecting data…')),
 				E('p', { 'id': 'turnserver_status' }, _('Collecting data…')),
-				E('p', {}, _('监听端口（配置值）: %s').format(port)),
-				E('p', {}, formatCertInfo(certDate))
+				E('p', {}, _('监听端口（配置值）: %s').format(port))
 			]);
 		};
 
@@ -142,7 +109,7 @@ return view.extend({
 		o.placeholder = '9090';
 
 		o = s.option(form.Value, 'domain', _('域名'),
-			_('客户端连接用的域名，例如 1688.goip.de。证书的 SAN 就是这个域名；Let\'s Encrypt 申请也要用它。'));
+			_('客户端连接用的域名，例如 1688.goip.de。'));
 		o.datatype = 'hostname';
 		o.placeholder = '1688.goip.de';
 
@@ -246,52 +213,6 @@ return view.extend({
 		o.onclick = function() {
 			return runHelper(m, '/etc/init.d/turnserver', ['stop'],
 				_('停止中转'), _('coturn 已停止。'));
-		};
-
-		s = m.section(form.NamedSection, 'cert', 'crossdesk-server', _('证书'));
-
-		o = s.option(form.ListValue, 'mode', _('证书模式'),
-			_('自签：免费、立刻可用，但客户端要装根证书或用跳过校验的版本；Let\'s Encrypt：公开可信，任何客户端直接认，但需要域名解析到本机且 80 端口能从互联网访问。'));
-		o.value('selfsigned', _('自签证书'));
-		o.value('letsencrypt', _('Let\'s Encrypt'));
-
-		o = s.option(form.Value, 'acme_email', _('ACME 邮箱'),
-			_('Let\'s Encrypt 账号邮箱（可空）。'));
-		o.datatype = 'email';
-		o.optional = true;
-		o.depends('mode', 'letsencrypt');
-
-		o = s.option(form.ListValue, 'acme_method', _('Let\'s Encrypt 验证方式'),
-			_('Webroot：用 uhttpd 的 /www 目录验证，LuCI 不中断；Standalone：申请期间临时停 uhttpd（会短暂断开 LuCI），80 端口被别的服务占着时用这个。'));
-		o.value('webroot', _('Webroot（uhttpd /www）'));
-		o.value('standalone', _('Standalone（临时停 uhttpd）'));
-		o.depends('mode', 'letsencrypt');
-
-		o = s.option(form.Button, '_gen_selfsigned', _('生成自签证书'),
-			_('用 SAN=DNS:域名 生成自签 CA + 服务器证书（有效期 10 年），写进 /etc/crossdesk/certs。根证书也留在同目录，可装到客户端上信任。点按钮前先保存上方改好的域名。'));
-		o.inputstyle = 'apply';
-		o.depends('mode', 'selfsigned');
-		o.onclick = function() {
-			return runHelper(m, '/usr/libexec/crossdesk-server/cert-selfsigned.sh', [],
-				_('生成自签证书'), _('自签证书已生成，服务已重启（如正在运行）。'));
-		};
-
-		o = s.option(form.Button, '_acme_issue', _('申请证书'),
-			_('用 acme.sh 向 Let\'s Encrypt 申请证书并安装到 /etc/crossdesk/certs，成功后重启服务。acme.sh 会自己装 cron 做自动续签，续签后同样重启服务。'));
-		o.inputstyle = 'apply';
-		o.depends('mode', 'letsencrypt');
-		o.onclick = function() {
-			return runHelper(m, '/usr/libexec/crossdesk-server/cert-acme.sh', ['issue'],
-				_('申请证书'), _('证书已申请并安装，服务已重启（如正在运行）。'));
-		};
-
-		o = s.option(form.Button, '_acme_renew', _('续签证书'),
-			_('立刻跑一次 acme.sh 续签（没到期会跳过）。正常情况下不用点，acme.sh 的 cron 会自动续。'));
-		o.inputstyle = 'apply';
-		o.depends('mode', 'letsencrypt');
-		o.onclick = function() {
-			return runHelper(m, '/usr/libexec/crossdesk-server/cert-acme.sh', ['renew'],
-				_('续签证书'), _('续签完成（未到期则跳过）。'));
 		};
 
 		s = m.section(form.NamedSection, 'advanced', 'crossdesk-server', _('高级设置'));

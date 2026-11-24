@@ -5,7 +5,7 @@
 include $(TOPDIR)/rules.mk
 
 LUCI_TITLE:=LuCI support for CrossDesk Server
-LUCI_DEPENDS:=+crossdesk-server +acme +openssl-util +coturn
+LUCI_DEPENDS:=+crossdesk-server +coturn
 
 PKG_LICENSE:=Apache-2.0
 PKG_MAINTAINER:=zeliu <134698307+lianzeliu@users.noreply.github.com>
