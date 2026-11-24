@@ -12,8 +12,9 @@
 # the binary + the admin web UI.
 #
 # After the workflow publishes a new release, update PKG_RELEASE_TAG
-# and PKG_HASH below with the new tag and the tarball's real sha256
-# (shown in the workflow log and on the release page).
+# below with the new tag (shown in the workflow log and on the release
+# page). PKG_HASH is intentionally 'skip' (user choice, 2026-11-24):
+# hash verification is disabled, so only the tag needs updating per release.
 
 include $(TOPDIR)/rules.mk
 
@@ -24,16 +25,13 @@ PKG_RELEASE:=1
 # Versioned release tag from the cloud workflow, e.g. openwrt-1.7.7-a1b2c3d.
 # Deliberately NOT a rolling tag: a rolling tag would change the tarball
 # under the same URL and invalidate PKG_HASH on every rebuild.
-PKG_RELEASE_TAG:=openwrt-1.7.7-XXXXXXX
+PKG_RELEASE_TAG:=openwrt-1.7.7-be2aa62
 
 PKG_SOURCE:=crossdesk-server-openwrt-mediatek-filogic-arm64-$(PKG_VERSION).tar.gz
 PKG_SOURCE_URL:=https://github.com/lianzeliu/crossdesk-server/releases/download/$(PKG_RELEASE_TAG)/
-# PLACEHOLDER: fill in the real sha256 of the release tarball after the
-# cloud workflow runs for the first time. Do NOT invent a hash, and do
-# not compute it from a locally built binary (cloud builds may differ
-# byte-for-byte). The build will fail checksum verification until this
-# is replaced, which is intentional.
-PKG_HASH:=0000000000000000000000000000000000000000000000000000000000000000
+# Hash verification disabled by user choice: the feed downloads the
+# release tarball without checksum verification.
+PKG_HASH:=skip
 
 PKG_MAINTAINER:=zeliu <134698307+lianzeliu@users.noreply.github.com>
 PKG_LICENSE:=LGPL-3.0-only
