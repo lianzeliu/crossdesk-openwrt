@@ -24,6 +24,25 @@ function getServiceStatus() {
 	});
 }
 
+function getTurnserverStatus() {
+	return L.resolveDefault(callServiceList('turnserver'), {}).then(function(res) {
+		const inst = res?.['turnserver']?.['instances'];
+		if (!inst)
+			return false;
+		for (const k in inst) {
+			if (inst[k]?.['running'])
+				return true;
+		}
+		return false;
+	});
+}
+
+function serviceLine(name, running) {
+	const color = running ? 'green' : 'red';
+	const text = running ? _('RUNNING') : _('NOT RUNNING');
+	return '<em><span style="color:%s"><strong>%s %s</strong></span></em>'.format(color, name, text);
+}
+
 function getCertInfo() {
 	return L.resolveDefault(fs.exec('openssl', ['x509', '-in', CERT_FILE, '-noout', '-enddate']), {}).then(function(res) {
 		if (!res || res.code !== 0 || !res.stdout)
@@ -60,13 +79,16 @@ function runHelper(map, script, args, title, successMsg) {
 		ui.hideModal();
 		if (res.code === 0) {
 			ui.addNotification(null, E('p', successMsg));
+			return true;
 		}
 		else {
 			ui.addNotification(null, E('p', _('执行失败：') + (res.stderr || res.stdout || _('未知错误'))), 'error');
+			return false;
 		}
 	}).catch(function(err) {
 		ui.hideModal();
 		ui.addNotification(null, E('p', _('操作失败：') + (err.message || err)), 'error');
+		return false;
 	});
 }
 
@@ -89,18 +111,22 @@ return view.extend({
 		s.anonymous = true;
 		s.render = function() {
 			poll.add(function() {
-				return L.resolveDefault(getServiceStatus()).then(function(running) {
+				return Promise.all([
+					L.resolveDefault(getServiceStatus()),
+					L.resolveDefault(getTurnserverStatus())
+				]).then(function(results) {
 					const el = document.getElementById('crossdesk_status');
-					if (el) {
-						const color = running ? 'green' : 'red';
-						const text = running ? _('RUNNING') : _('NOT RUNNING');
-						el.innerHTML = '<em><span style="color:%s"><strong>%s %s</strong></span></em>'.format(color, _('CrossDesk Server'), text);
-					}
+					if (el)
+						el.innerHTML = serviceLine(_('CrossDesk Server'), results[0]);
+					const tel = document.getElementById('turnserver_status');
+					if (tel)
+						tel.innerHTML = serviceLine(_('TURN 中转 (coturn)'), results[1]);
 				});
 			});
 
 			return E('div', { 'class': 'cbi-section', 'id': 'status_bar' }, [
 				E('p', { 'id': 'crossdesk_status' }, _('Collecting data…')),
+				E('p', { 'id': 'turnserver_status' }, _('Collecting data…')),
 				E('p', {}, _('监听端口（配置值）: %s').format(port)),
 				E('p', {}, formatCertInfo(certDate))
 			]);
@@ -142,7 +168,7 @@ return view.extend({
 		s = m.section(form.NamedSection, 'turn', 'crossdesk-server', _('TURN（中转）'));
 
 		o = s.option(form.Value, 'host', _('TURN 服务器地址'),
-			_('直连失败时客户端走这个中转，例如 coturn 的公网地址。留空表示不配 TURN。'));
+			_('直连失败时客户端走这个中转。用本机 coturn 时，点“应用中转配置”后自动填为域名；用第三方 TURN 时手动填。'));
 		o.datatype = 'hostname';
 		o.optional = true;
 		o.placeholder = '1688.goip.de';
@@ -152,7 +178,7 @@ return view.extend({
 		o.placeholder = '3478';
 
 		o = s.option(form.Value, 'secret', _('TURN 共享密钥'),
-			_('必须和 coturn 的 static-auth-secret 一致，服务端用它给每个客户端派发临时账号密码。'));
+			_('本机 coturn 和服务端共用这一个 secret，只填一次：写进 coturn 的 static-auth-secret，服务端用它给每个客户端派发临时账号密码。必须和 coturn 的配置一致。'));
 		o.password = true;
 		o.optional = true;
 
@@ -160,6 +186,67 @@ return view.extend({
 			_('服务端给客户端派发的 TURN 临时凭证的有效期。'));
 		o.datatype = 'range(60,86400)';
 		o.placeholder = '3600';
+
+		o = s.option(form.Flag, 'use_local', _('使用本机 coturn 中转'),
+			_('勾上后用本机跑的 coturn 做中转，secret 只填一次，服务端 TURN 地址自动同步为“域名:监听端口”。取消则用上面手动填的第三方 TURN（本机 coturn 不动）。'));
+		o.rmempty = false;
+
+		o = s.option(form.Value, 'local_port', _('本机 coturn 监听端口'));
+		o.datatype = 'port';
+		o.placeholder = '3478';
+		o.depends('use_local', '1');
+
+		o = s.option(form.Value, 'realm', _('Realm'),
+			_('留空则用域名。'));
+		o.datatype = 'hostname';
+		o.optional = true;
+		o.placeholder = _('默认与域名相同');
+		o.depends('use_local', '1');
+
+		o = s.option(form.Value, 'relay_min_port', _('中转端口范围下限'));
+		o.datatype = 'port';
+		o.placeholder = '50000';
+		o.depends('use_local', '1');
+
+		o = s.option(form.Value, 'relay_max_port', _('中转端口范围上限'));
+		o.datatype = 'port';
+		o.placeholder = '50100';
+		o.depends('use_local', '1');
+
+		o = s.option(form.Value, 'external_ip', _('外网地址'),
+			_('留空则用域名。应用时会把域名解析成当前公网 IP 写进 coturn 配置（coturn 只认 IP）；公网 IP 变了要重新点一次“应用中转配置”。'));
+		o.datatype = 'hostname';
+		o.optional = true;
+		o.placeholder = _('默认与域名相同');
+		o.depends('use_local', '1');
+
+		o = s.option(form.Button, '_relay_apply', _('应用中转配置'),
+			_('按上方配置生成 /etc/turnserver.conf，把服务端 TURN 地址同步为“域名:监听端口”，添加防火墙规则（监听端口 + 中转端口段），然后启用并重启 coturn、重启服务端。改了监听端口后，旧端口的防火墙规则不会自动删，要去防火墙里手动删。'));
+		o.inputstyle = 'apply';
+		o.depends('use_local', '1');
+		o.onclick = function() {
+			return runHelper(m, '/usr/libexec/crossdesk-server/turnserver-apply.sh', [],
+				_('应用中转配置'), _('中转配置已应用，coturn 与服务已重启。')).then(function(ok) {
+				if (ok)
+					window.location.reload();
+			});
+		};
+
+		o = s.option(form.Button, '_relay_start', _('启动中转'),
+			_('启动本机 coturn（用当前 /etc/turnserver.conf）。第一次用请先点“应用中转配置”，否则 coturn 可能因未启用而拒绝启动。'));
+		o.inputstyle = 'apply';
+		o.onclick = function() {
+			return runHelper(m, '/etc/init.d/turnserver', ['start'],
+				_('启动中转'), _('coturn 已启动。'));
+		};
+
+		o = s.option(form.Button, '_relay_stop', _('停止中转'),
+			_('停止本机 coturn。'));
+		o.inputstyle = 'apply';
+		o.onclick = function() {
+			return runHelper(m, '/etc/init.d/turnserver', ['stop'],
+				_('停止中转'), _('coturn 已停止。'));
+		};
 
 		s = m.section(form.NamedSection, 'cert', 'crossdesk-server', _('证书'));
 
