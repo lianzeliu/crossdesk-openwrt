@@ -138,7 +138,13 @@ fi
 
 EXT_IP=$(resolve_ipv4 "$external_ip")
 if [ -z "$EXT_IP" ]; then
-	EXT_IP=$(ubus call network.interface.wan status 2>/dev/null | jsonfilter -e '@["ipv4-address"][0].address' 2>/dev/null)
+	# The WAN lookup must not kill the script (set -e): ubus or
+	# jsonfilter failing (no "wan" interface, no jsonfilter, bad
+	# JSON) would otherwise abort Apply with no message, because
+	# stderr is redirected to /dev/null. An empty result is fine:
+	# the WARNING below covers it and the config is written
+	# without external-ip.
+	EXT_IP=$(ubus call network.interface.wan status 2>/dev/null | jsonfilter -e '@["ipv4-address"][0].address' 2>/dev/null || true)
 	[ -n "$EXT_IP" ] && log "Could not resolve $external_ip, using WAN address $EXT_IP instead."
 fi
 if [ -z "$EXT_IP" ]; then
