@@ -124,7 +124,15 @@ fi
 
 # --- use_local=1 ---
 [ -n "$domain" ] || { echo "No domain configured (crossdesk-server.global.domain)" >&2; exit 1; }
-[ -n "$secret" ] || { echo "TURN secret is empty; set it in LuCI (TURN section) first" >&2; exit 1; }
+if [ -z "$secret" ]; then
+	# No secret typed: generate a random 24-char alphanumeric one and
+	# save it to UCI, so Apply never fails just because the field was
+	# left empty. LuCI reloads after Apply and shows the new secret.
+	secret=$(tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 24)
+	uci set crossdesk-server.turn.secret="$secret"
+	uci commit crossdesk-server
+	log "No TURN secret set; generated a random one and saved it to UCI."
+fi
 [ -z "$realm" ] && realm="$domain"
 [ -z "$external_ip" ] && external_ip="$domain"
 

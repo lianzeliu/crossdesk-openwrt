@@ -37,10 +37,12 @@ function getTurnserverStatus() {
 
 function serviceLine(name, running) {
 	const color = running ? 'green' : 'red';
-	const text = running ? _('RUNNING') : _('NOT RUNNING');
+	const text = running ? _('运行中') : _('未在运行');
 	return '<em><span style="color:%s"><strong>%s %s</strong></span></em>'.format(color, name, text);
 }
 
+// Run a helper script. On failure, show the script's own output in the
+// page, so the user can see WHY it failed without opening SSH.
 function runHelper(map, script, args, title, successMsg) {
 	ui.showModal(title, [
 		E('p', { 'class': 'spinning' }, _('正在执行，请稍候…'))
@@ -54,7 +56,11 @@ function runHelper(map, script, args, title, successMsg) {
 			return true;
 		}
 		else {
-			ui.addNotification(null, E('p', _('执行失败：') + (res.stderr || res.stdout || _('未知错误'))), 'error');
+			const detail = ((res.stderr || res.stdout || _('未知错误')).trim());
+			ui.addNotification(null, E('div', [
+				E('p', _('执行失败')),
+				E('pre', { 'style': 'white-space:pre-wrap' }, detail)
+			]), 'error');
 			return false;
 		}
 	}).catch(function(err) {
@@ -75,6 +81,7 @@ return view.extend({
 
 		m = new form.Map('crossdesk-server', _('CrossDesk Server'));
 
+		// ---- Status ----
 		s = m.section(form.TypedSection);
 		s.anonymous = true;
 		s.render = function() {
@@ -89,19 +96,28 @@ return view.extend({
 					const tel = document.getElementById('turnserver_status');
 					if (tel)
 						tel.innerHTML = serviceLine(_('TURN 中转 (coturn)'), results[1]);
+					const hint = document.getElementById('turnserver_hint');
+					if (hint) {
+						if (!results[1])
+							hint.textContent = _('中转未在运行：去下方“中转”一节勾上“启用本机中转”，点“应用并启动中转”。');
+						else
+							hint.textContent = '';
+					}
 				});
 			});
 
 			return E('div', { 'class': 'cbi-section', 'id': 'status_bar' }, [
 				E('p', { 'id': 'crossdesk_status' }, _('Collecting data…')),
 				E('p', { 'id': 'turnserver_status' }, _('Collecting data…')),
-				E('p', {}, _('监听端口（配置值）: %s').format(port))
+				E('p', { 'id': 'turnserver_hint', 'style': 'color:#888' }, ''),
+				E('p', {}, _('监听端口: %s').format(port))
 			]);
 		};
 
+		// ---- Basic ----
 		s = m.section(form.NamedSection, 'global', 'crossdesk-server', _('基本设置'));
 
-		o = s.option(form.Flag, 'enabled', _('启用'));
+		o = s.option(form.Flag, 'enabled', _('启用服务'));
 		o.rmempty = false;
 
 		o = s.option(form.Value, 'port', _('监听端口'));
@@ -114,12 +130,88 @@ return view.extend({
 		o.placeholder = '1688.goip.de';
 
 		o = s.option(form.Flag, 'auto_fw', _('允许从互联网连接'),
-			_('在防火墙上放行信号端口（TCP）。如果路由器 WAN 口本来就放行了，不用勾。'));
+			_('在防火墙上放行信号端口（TCP）。'));
 
-		s = m.section(form.NamedSection, 'ice', 'crossdesk-server', _('ICE / STUN'));
+		// ---- Relay (TURN) ----
+		s = m.section(form.NamedSection, 'turn', 'crossdesk-server', _('中转 (TURN)'));
 
-		o = s.option(form.DynamicList, 'stun', _('自定义 STUN 服务器'),
-			_('每行一个，格式 stun:主机:端口。STUN 只帮客户端打洞，直连失败时仍需 TURN 中转。留空则不下发 STUN。'));
+		o = s.option(form.Flag, 'use_local', _('启用本机中转 (coturn)'),
+			_('勾上后用路由器上的 coturn 做中转。直连失败时客户端走它继续连接。'));
+		o.rmempty = false;
+
+		o = s.option(form.Value, 'secret', _('中转密钥'),
+			_('本机 coturn 和服务端共用的密钥。留空也没关系，点“应用并启动中转”时会自动生成一串随机的填回来。'));
+		o.password = true;
+		o.optional = true;
+		o.depends('use_local', '1');
+
+		o = s.option(form.Value, 'local_port', _('本机中转监听端口'));
+		o.datatype = 'port';
+		o.placeholder = '3478';
+		o.depends('use_local', '1');
+
+		o = s.option(form.Value, 'host', _('第三方 TURN 地址'),
+			_('不用本机中转时，在这里填第三方的 TURN 服务器地址。'));
+		o.datatype = 'hostname';
+		o.optional = true;
+		o.placeholder = '1688.goip.de';
+		o.depends('use_local', '0');
+
+		o = s.option(form.Value, 'port', _('第三方 TURN 端口'));
+		o.datatype = 'port';
+		o.placeholder = '3478';
+		o.depends('use_local', '0');
+
+		o = s.option(form.Value, 'credential_ttl', _('中转凭证有效期（秒）'));
+		o.datatype = 'range(60,86400)';
+		o.placeholder = '3600';
+
+		o = s.option(form.Value, 'relay_min_port', _('中转端口范围下限'));
+		o.datatype = 'port';
+		o.placeholder = '50000';
+		o.depends('use_local', '1');
+
+		o = s.option(form.Value, 'relay_max_port', _('中转端口范围上限'));
+		o.datatype = 'port';
+		o.placeholder = '50100';
+		o.depends('use_local', '1');
+
+		o = s.option(form.Value, 'realm', _('Realm（留空用域名）'));
+		o.datatype = 'hostname';
+		o.optional = true;
+		o.depends('use_local', '1');
+
+		o = s.option(form.Value, 'external_ip', _('外网地址（留空用域名）'),
+			_('公网 IP 变了要重新点一次“应用并启动中转”。'));
+		o.datatype = 'hostname';
+		o.optional = true;
+		o.depends('use_local', '1');
+
+		o = s.option(form.Button, '_relay_apply', _('应用并启动中转'),
+			_('只需要点这一个按钮：按上方配置生成中转配置、放行防火墙、启用并启动 coturn，然后重启服务端。不用再单独点启动。'));
+		o.inputstyle = 'apply';
+		o.depends('use_local', '1');
+		o.onclick = function() {
+			return runHelper(m, '/usr/libexec/crossdesk-server/turnserver-apply.sh', [],
+				_('应用并启动中转'), _('中转已应用并启动，服务端已重启。')).then(function(ok) {
+				if (ok)
+					window.location.reload();
+			});
+		};
+
+		o = s.option(form.Button, '_relay_stop', _('停止中转'),
+			_('停止本机 coturn。'));
+		o.inputstyle = 'apply';
+		o.onclick = function() {
+			return runHelper(m, '/etc/init.d/turnserver', ['stop'],
+				_('停止中转'), _('coturn 已停止。'));
+		};
+
+		// ---- ICE / STUN ----
+		s = m.section(form.NamedSection, 'ice', 'crossdesk-server', _('打洞 (STUN)'));
+
+		o = s.option(form.DynamicList, 'stun', _('STUN 服务器'),
+			_('每行一个，格式 stun:主机:端口。STUN 只帮打洞，直连失败时仍需中转。留空则不下发。'));
 		o.placeholder = 'stun:stun.qq.com:3478';
 		o.validate = function(section_id, value) {
 			if (!value)
@@ -132,93 +224,11 @@ return view.extend({
 			return true;
 		};
 
-		s = m.section(form.NamedSection, 'turn', 'crossdesk-server', _('TURN（中转）'));
-
-		o = s.option(form.Value, 'host', _('TURN 服务器地址'),
-			_('直连失败时客户端走这个中转。用本机 coturn 时，点“应用中转配置”后自动填为域名；用第三方 TURN 时手动填。'));
-		o.datatype = 'hostname';
-		o.optional = true;
-		o.placeholder = '1688.goip.de';
-
-		o = s.option(form.Value, 'port', _('TURN 端口'));
-		o.datatype = 'port';
-		o.placeholder = '3478';
-
-		o = s.option(form.Value, 'secret', _('TURN 共享密钥'),
-			_('本机 coturn 和服务端共用这一个 secret，只填一次：写进 coturn 的 static-auth-secret，服务端用它给每个客户端派发临时账号密码。必须和 coturn 的配置一致。'));
-		o.password = true;
-		o.optional = true;
-
-		o = s.option(form.Value, 'credential_ttl', _('TURN 凭证有效期（秒）'),
-			_('服务端给客户端派发的 TURN 临时凭证的有效期。'));
-		o.datatype = 'range(60,86400)';
-		o.placeholder = '3600';
-
-		o = s.option(form.Flag, 'use_local', _('使用本机 coturn 中转'),
-			_('勾上后用本机跑的 coturn 做中转，secret 只填一次，服务端 TURN 地址自动同步为“域名:监听端口”。取消则用上面手动填的第三方 TURN（本机 coturn 不动）。'));
-		o.rmempty = false;
-
-		o = s.option(form.Value, 'local_port', _('本机 coturn 监听端口'));
-		o.datatype = 'port';
-		o.placeholder = '3478';
-		o.depends('use_local', '1');
-
-		o = s.option(form.Value, 'realm', _('Realm'),
-			_('留空则用域名。'));
-		o.datatype = 'hostname';
-		o.optional = true;
-		o.placeholder = _('默认与域名相同');
-		o.depends('use_local', '1');
-
-		o = s.option(form.Value, 'relay_min_port', _('中转端口范围下限'));
-		o.datatype = 'port';
-		o.placeholder = '50000';
-		o.depends('use_local', '1');
-
-		o = s.option(form.Value, 'relay_max_port', _('中转端口范围上限'));
-		o.datatype = 'port';
-		o.placeholder = '50100';
-		o.depends('use_local', '1');
-
-		o = s.option(form.Value, 'external_ip', _('外网地址'),
-			_('留空则用域名。应用时会把域名解析成当前公网 IP 写进 coturn 配置（coturn 只认 IP）；公网 IP 变了要重新点一次“应用中转配置”。'));
-		o.datatype = 'hostname';
-		o.optional = true;
-		o.placeholder = _('默认与域名相同');
-		o.depends('use_local', '1');
-
-		o = s.option(form.Button, '_relay_apply', _('应用中转配置'),
-			_('按上方配置生成 /etc/turnserver.conf，把服务端 TURN 地址同步为“域名:监听端口”，添加防火墙规则（监听端口 + 中转端口段），然后启用并重启 coturn、重启服务端。改了监听端口后，旧端口的防火墙规则不会自动删，要去防火墙里手动删。'));
-		o.inputstyle = 'apply';
-		o.depends('use_local', '1');
-		o.onclick = function() {
-			return runHelper(m, '/usr/libexec/crossdesk-server/turnserver-apply.sh', [],
-				_('应用中转配置'), _('中转配置已应用，coturn 与服务已重启。')).then(function(ok) {
-				if (ok)
-					window.location.reload();
-			});
-		};
-
-		o = s.option(form.Button, '_relay_start', _('启动中转'),
-			_('启动本机 coturn（用当前 /etc/turnserver.conf）。第一次用请先点“应用中转配置”，否则 coturn 可能因未启用而拒绝启动。'));
-		o.inputstyle = 'apply';
-		o.onclick = function() {
-			return runHelper(m, '/etc/init.d/turnserver', ['start'],
-				_('启动中转'), _('coturn 已启动。'));
-		};
-
-		o = s.option(form.Button, '_relay_stop', _('停止中转'),
-			_('停止本机 coturn。'));
-		o.inputstyle = 'apply';
-		o.onclick = function() {
-			return runHelper(m, '/etc/init.d/turnserver', ['stop'],
-				_('停止中转'), _('coturn 已停止。'));
-		};
-
+		// ---- Certificate ----
 		s = m.section(form.NamedSection, 'cert', 'crossdesk-server', _('证书'));
 
 		o = s.option(form.Button, '_gen_selfsigned', _('生成证书'),
-			_('生成一对自签证书（SAN=DNS:域名，有效期 10 年），写进 /etc/crossdesk/certs，覆盖已有证书，并重启服务。服务端启动时如果证书不在也会自己生成，这个按钮是手动重新生成。'));
+			_('生成一对自签证书（有效期 10 年），写进 /etc/crossdesk/certs，覆盖已有证书，并重启服务。'));
 		o.inputstyle = 'apply';
 		o.onclick = function() {
 			return runHelper(m, '/usr/libexec/crossdesk-server/cert-selfsigned.sh', [],
@@ -226,13 +236,14 @@ return view.extend({
 		};
 
 		o = s.option(form.Button, '_del_cert', _('删除证书'),
-			_('删除 /etc/crossdesk/certs 下的证书文件，并重启服务；重启后服务端会自动生成一对新的自签证书。'));
+			_('删除 /etc/crossdesk/certs 下的证书文件。删完之后服务不会自动补证书，请再点“生成证书”重新生成。'));
 		o.inputstyle = 'apply';
 		o.onclick = function() {
 			return runHelper(m, '/usr/libexec/crossdesk-server/cert-delete.sh', [],
-				_('删除证书'), _('证书已删除，服务已重启（如正在运行），新证书已自动生成。'));
+				_('删除证书'), _('证书已删除。请点“生成证书”重新生成。'));
 		};
 
+		// ---- Advanced ----
 		s = m.section(form.NamedSection, 'advanced', 'crossdesk-server', _('高级设置'));
 
 		o = s.option(form.Value, 'max_connections', _('最大连接数'));
