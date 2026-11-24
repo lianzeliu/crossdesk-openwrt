@@ -181,8 +181,8 @@ return view.extend({
 		o.optional = true;
 		o.depends('use_local', '1');
 
-		o = s.option(form.Value, 'external_ip', _('外网地址（留空用域名）'),
-			_('公网 IP 变了要重新点一次“应用并启动中转”。'));
+		o = s.option(form.Value, 'external_ip', _('外网地址（留空自动用 WAN 口 IP）'),
+			_('留空最省事：中转地址用 WAN 口 IP，每次分配时现取，公网 IP 变了不用重新应用。只有 WAN 口是私网 IP（运营商 CGNAT、前面还有一级路由）时才需要填，填域名或公网 IP；填了域名的话，IP 变了要重新点一次“应用并启动中转”。'));
 		o.datatype = 'hostname';
 		o.optional = true;
 		o.depends('use_local', '1');
