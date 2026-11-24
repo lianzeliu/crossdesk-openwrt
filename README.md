@@ -14,7 +14,7 @@ libgcc_s / libc），但只在 filogic 上验证过。
 | 包 | 说明 |
 |---|---|
 | `crossdesk-server` | 服务端二进制 + 管理页面（`/usr/share/crossdesk/admin`）+ procd 服务 + 默认配置 |
-| `luci-app-crossdesk-server` | LuCI 界面：基本设置、自定义 STUN、TURN（含本机 coturn 中转）、高级设置。装它时会一起装上 `coturn`（中转） |
+| `luci-app-crossdesk-server` | LuCI 界面：基本设置、自定义 STUN、TURN（含本机 coturn 中转）、证书（生成 / 删除）、高级设置。装它时会一起装上 `coturn`（中转） |
 
 > `coturn` 来自 telephony feed。ImmortalWrt 默认 feeds 里有
 > telephony；如果你的 feeds 里没有，先加
@@ -50,7 +50,7 @@ luci-app-crossdesk-server_*.ipk`，或直接编进固件。
 ## 首次使用
 
 1. LuCI → 服务 → CrossDesk Server。
-2. 先确认证书在位（没有证书服务起不来，会直接拒绝启动并记一条日志）。证书是 `/etc/crossdesk/certs/` 下的 `api.crossdesk.cn_bundle.crt` + `api.crossdesk.cn.key`，用 openssl 手动生成、SAN=DNS:域名；客户端要么把根证书装进受信任根，要么用跳过自建校验的客户端版本。LuCI 里不提供证书生成功能。
+2. 证书不用管：服务端启动时如果 `/etc/crossdesk/certs/` 下没有证书，会自己用 openssl 生成一对自签证书（10 年有效，SAN=DNS:api.crossdesk.cn），客户端（自建跳过校验的版本）直接认。想手动重新生成或删除证书，去 LuCI → 证书，点“生成证书”或“删除证书”（删除后重启服务会自动生成一对新的）。
 3. 配 STUN（默认已填 `stun.qq.com` 和 `stun.miwifi.com`）和
    TURN（直连失败才用得上，需要另外跑一个 coturn，见下节）。
 4. 勾“启用”，保存并应用，服务即启动。管理页面在
@@ -93,8 +93,9 @@ coturn。LuCI 里不用再手工配：
 - `/etc/crossdesk/certs/api.crossdesk.cn_bundle.crt`（证书链）
 - `/etc/crossdesk/certs/api.crossdesk.cn.key`（私钥）
 
-缺一个就 Fatal 退出。init 脚本在启动前会先检查，缺证书时拒绝
-启动并写日志，不会死循环重启。
+缺一个就由服务端自己用 openssl 生成一对自签证书（10 年有效），
+不需要手动生成、也不用 Let's Encrypt。客户端（自建跳过校验的
+版本）直接认自签证书。
 
 ## /var 是内存盘
 

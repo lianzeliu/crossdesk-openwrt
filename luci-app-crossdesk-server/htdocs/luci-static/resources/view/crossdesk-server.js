@@ -215,6 +215,24 @@ return view.extend({
 				_('停止中转'), _('coturn 已停止。'));
 		};
 
+		s = m.section(form.NamedSection, 'cert', 'crossdesk-server', _('证书'));
+
+		o = s.option(form.Button, '_gen_selfsigned', _('生成证书'),
+			_('生成一对自签证书（SAN=DNS:域名，有效期 10 年），写进 /etc/crossdesk/certs，覆盖已有证书，并重启服务。服务端启动时如果证书不在也会自己生成，这个按钮是手动重新生成。'));
+		o.inputstyle = 'apply';
+		o.onclick = function() {
+			return runHelper(m, '/usr/libexec/crossdesk-server/cert-selfsigned.sh', [],
+				_('生成证书'), _('证书已生成，服务已重启（如正在运行）。'));
+		};
+
+		o = s.option(form.Button, '_del_cert', _('删除证书'),
+			_('删除 /etc/crossdesk/certs 下的证书文件，并重启服务；重启后服务端会自动生成一对新的自签证书。'));
+		o.inputstyle = 'apply';
+		o.onclick = function() {
+			return runHelper(m, '/usr/libexec/crossdesk-server/cert-delete.sh', [],
+				_('删除证书'), _('证书已删除，服务已重启（如正在运行），新证书已自动生成。'));
+		};
+
 		s = m.section(form.NamedSection, 'advanced', 'crossdesk-server', _('高级设置'));
 
 		o = s.option(form.Value, 'max_connections', _('最大连接数'));

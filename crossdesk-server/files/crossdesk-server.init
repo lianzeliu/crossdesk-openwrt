@@ -103,12 +103,9 @@ start_service() {
 	ln -sfn "$PERSIST_DIR/certs" "$CERTS_DIR"
 	ln -sfn "$PERSIST_DIR/db" "$DB_DIR"
 
-	# The server exits Fatal without its two certificate files.
-	# Refuse to start with a clear message instead of crash-looping.
-	if [ ! -f "$CERTS_DIR/api.crossdesk.cn_bundle.crt" ] || [ ! -f "$CERTS_DIR/api.crossdesk.cn.key" ]; then
-		logger -p daemon.error -t "crossdesk-server" "Certificate files missing in $CERTS_DIR; place api.crossdesk.cn_bundle.crt and api.crossdesk.cn.key there first (generate them manually with openssl, SAN=DNS:<domain>)"
-		return 1
-	fi
+	# The server generates a self-signed certificate pair on startup
+	# when the files are missing, so there is no certificate check
+	# here; a missing openssl CLI is reported by the server itself.
 
 	build_ice_json
 	# An empty ICE list must still be passed as [] so the variable is
