@@ -59,6 +59,16 @@ define Package/crossdesk-server/conffiles
 /etc/crossdesk
 endef
 
+# The release tarball is flat (no top-level directory): crossdesk_server,
+# admin/ and LICENSE sit at the top level. The default unpack extracts to
+# $(PKG_BUILD_DIR)/.., which would spill them into the parent build dir
+# (that's why the install step could not find crossdesk_server). Extract
+# directly into $(PKG_BUILD_DIR) instead. Keep the workflow producing a
+# flat tarball; if it ever gains a top-level directory, remove this.
+define Build/Prepare
+	tar -xzf $(DL_DIR)/$(PKG_SOURCE) -C $(PKG_BUILD_DIR)
+endef
+
 define Build/Compile
 	# Prebuilt binary from the cloud workflow release, nothing to compile.
 	true
