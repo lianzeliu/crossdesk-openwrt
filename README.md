@@ -50,7 +50,7 @@ luci-app-crossdesk-server_*.ipk`，或直接编进固件。
 ## 首次使用
 
 1. LuCI → 服务 → CrossDesk Server。
-2. 证书不用管：服务端启动时如果 `/etc/crossdesk/certs/` 下没有证书，会自己用 openssl 生成一对自签证书（10 年有效，SAN=DNS:api.crossdesk.cn），客户端（自建跳过校验的版本）直接认。想手动重新生成或删除证书，去 LuCI → 证书，点“生成证书”或“删除证书”（删除后重启服务会自动生成一对新的）。
+2. 先弄证书（没有证书服务起不来，会直接拒绝启动并记一条日志）。去 LuCI → 证书，点“生成证书”，会生成一对自签证书（10 年有效，SAN=DNS:域名）写进 `/etc/crossdesk/certs/`。客户端要么把根证书装进受信任根，要么用跳过自建校验的客户端版本。想换证书就再点一次“生成证书”，想清掉就点“删除证书”。
 3. 配 STUN（默认已填 `stun.qq.com` 和 `stun.miwifi.com`）和
    TURN（直连失败才用得上，需要另外跑一个 coturn，见下节）。
 4. 勾“启用”，保存并应用，服务即启动。管理页面在
@@ -93,9 +93,10 @@ coturn。LuCI 里不用再手工配：
 - `/etc/crossdesk/certs/api.crossdesk.cn_bundle.crt`（证书链）
 - `/etc/crossdesk/certs/api.crossdesk.cn.key`（私钥）
 
-缺一个就由服务端自己用 openssl 生成一对自签证书（10 年有效），
-不需要手动生成、也不用 Let's Encrypt。客户端（自建跳过校验的
-版本）直接认自签证书。
+缺一个就 Fatal 退出。init 脚本在启动前会先检查，缺证书时拒绝
+启动并写日志，不会死循环重启。证书在 LuCI → 证书里生成和删除
+（“生成证书”重签一对自签证书，“删除证书”清掉文件；删除后要
+重新生成才能启动服务，服务端不再自动生成）。
 
 ## /var 是内存盘
 

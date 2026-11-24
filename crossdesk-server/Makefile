@@ -43,7 +43,7 @@ define Package/crossdesk-server
   SECTION:=net
   CATEGORY:=Network
   TITLE:=CrossDesk Server Program (self-hosted, musl aarch64)
-  DEPENDS:=@(aarch64) +libstdcpp +openssl-util
+  DEPENDS:=@(aarch64) +libstdcpp
   URL:=https://github.com/lianzeliu/crossdesk-server
 endef
 
