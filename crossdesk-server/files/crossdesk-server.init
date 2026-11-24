@@ -1,0 +1,166 @@
+#!/bin/sh /etc/rc.common
+
+USE_PROCD=1
+START=99
+
+CONF="crossdesk-server"
+PERSIST_DIR="/etc/crossdesk"
+CERTS_DIR="/var/lib/crossdesk/certs"
+DB_DIR="/var/lib/crossdesk/db"
+LOG_DIR="/var/log/crossdesk"
+ADMIN_WEB_DIR="/usr/share/crossdesk/admin"
+
+# Escape a string for embedding in JSON: backslash, double quote,
+# and strip control characters. Implemented with sed (not ${var//})
+# because the shell here is busybox ash / dash, and dash does not
+# support the ${var//pattern/replacement} expansion.
+json_escape() {
+	printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' | tr -d '\000-\037'
+}
+
+# Accumulate STUN URLs (called via config_list_foreach).
+append_stun() {
+	local url="$1"
+	[ -n "$url" ] || return 0
+	url=$(json_escape "$url")
+	if [ -n "$STUN_URLS" ]; then
+		STUN_URLS="$STUN_URLS,\"$url\""
+	else
+		STUN_URLS="\"$url\""
+	fi
+}
+
+# Build the compact CROSSDESK_ICE_SERVERS JSON (no spaces, so it can
+# be passed as a single procd env word). Result in $ICE_JSON, or empty
+# when neither STUN nor TURN is configured.
+build_ice_json() {
+	local turn_entry
+	STUN_URLS=""
+	config_list_foreach ice stun append_stun
+
+	ICE_JSON=""
+	if [ -n "$STUN_URLS" ]; then
+		ICE_JSON="{\"urls\":[$STUN_URLS]}"
+	fi
+
+	# TURN entry: the server requires a shared secret for every TURN
+	# endpoint (see IceServerConfigIssuer: per-entry "shared_secret",
+	# falling back to COTURN_AUTH_SECRET). Without a secret the
+	# entry is skipped and a warning is logged.
+	if [ -n "$turn_host" ]; then
+		if [ -z "$turn_secret" ]; then
+			logger -p daemon.warning -t "crossdesk-server" "TURN host is set but secret is empty; TURN entry skipped"
+		else
+			turn_entry="{\"urls\":[\"turn:$(json_escape "$turn_host"):$turn_port?transport=udp\",\"turn:$(json_escape "$turn_host"):$turn_port?transport=tcp\"],\"shared_secret\":\"$(json_escape "$turn_secret")\"}"
+			if [ -n "$ICE_JSON" ]; then
+				ICE_JSON="$ICE_JSON,$turn_entry"
+			else
+				ICE_JSON="$turn_entry"
+			fi
+		fi
+	fi
+
+	[ -n "$ICE_JSON" ] && ICE_JSON="[$ICE_JSON]"
+}
+
+start_service() {
+	local enabled port auto_fw
+	local turn_host turn_port turn_secret turn_ttl
+	local max_connections auth_workers auth_timeout auth_queue
+	local auth_source_capacity auth_source_per_minute
+	local log_retention offline_retention retention_interval
+
+	config_load "$CONF"
+	config_get_bool enabled global enabled 0
+	[ "$enabled" -eq 1 ] || return 1
+	config_get port global port 9090
+	config_get_bool auto_fw global auto_fw 0
+
+	config_get turn_host turn host ""
+	config_get turn_port turn port 3478
+	config_get turn_secret turn secret ""
+	config_get turn_ttl turn credential_ttl 3600
+
+	config_get max_connections advanced max_connections 8192
+	config_get auth_workers advanced auth_workers 2
+	config_get auth_timeout advanced auth_timeout 600
+	config_get auth_queue advanced auth_queue 4096
+	config_get auth_source_capacity advanced auth_source_capacity 256
+	config_get auth_source_per_minute advanced auth_source_per_minute 60
+	config_get log_retention advanced log_retention 185
+	config_get offline_retention advanced offline_retention 180
+	config_get retention_interval advanced retention_interval 3600
+
+	# /var is tmpfs: certs and the device database would be lost on
+	# every reboot. Keep the real data under /etc (persistent) and
+	# point the server's hardcoded paths at it with symlinks.
+	for dir in "$PERSIST_DIR/certs" "$PERSIST_DIR/db" "$LOG_DIR" "/var/lib/crossdesk"; do
+		if [ ! -d "$dir" ] && ! mkdir -p "$dir"; then
+			logger -p daemon.error -t "crossdesk-server" "Failed to create directory: $dir"
+			return 1
+		fi
+	done
+	ln -sfn "$PERSIST_DIR/certs" "$CERTS_DIR"
+	ln -sfn "$PERSIST_DIR/db" "$DB_DIR"
+
+	# The server exits Fatal without its two certificate files.
+	# Refuse to start with a clear message instead of crash-looping.
+	if [ ! -f "$CERTS_DIR/api.crossdesk.cn_bundle.crt" ] || [ ! -f "$CERTS_DIR/api.crossdesk.cn.key" ]; then
+		logger -p daemon.error -t "crossdesk-server" "Certificate files missing in $CERTS_DIR; generate a self-signed certificate or issue a Let's Encrypt certificate first (LuCI: CrossDesk Server -> Certificate)"
+		return 1
+	fi
+
+	build_ice_json
+	# An empty ICE list must still be passed as [] so the variable is
+	# always defined; the server treats [] the same as "no ICE config"
+	# (no STUN/TURN issued to clients).
+	[ -n "$ICE_JSON" ] || ICE_JSON="[]"
+
+	procd_open_instance "crossdesk-server"
+	procd_set_param command /usr/bin/crossdesk_server "$port"
+
+	procd_set_param env \
+		CROSSDESK_ADMIN_WEB_DIR="$ADMIN_WEB_DIR" \
+		"CROSSDESK_ICE_SERVERS=$ICE_JSON" \
+		COTURN_PUBLIC_HOST="$turn_host" \
+		COTURN_PORT="$turn_port" \
+		COTURN_AUTH_SECRET="$turn_secret" \
+		COTURN_CREDENTIAL_TTL_SECONDS="$turn_ttl" \
+		CROSSDESK_MAX_CONNECTIONS="$max_connections" \
+		CROSSDESK_AUTH_WORKERS="$auth_workers" \
+		CROSSDESK_AUTH_TIMEOUT_SECONDS="$auth_timeout" \
+		CROSSDESK_AUTH_QUEUE_CAPACITY="$auth_queue" \
+		CROSSDESK_AUTH_SOURCE_CAPACITY="$auth_source_capacity" \
+		CROSSDESK_AUTH_SOURCE_PER_MINUTE="$auth_source_per_minute" \
+		CROSSDESK_LOG_RETENTION_DAYS="$log_retention" \
+		CROSSDESK_OFFLINE_RETENTION_DAYS="$offline_retention" \
+		CROSSDESK_RETENTION_INTERVAL_SECONDS="$retention_interval"
+
+	procd_set_param respawn
+	procd_set_param stdout 1
+	procd_set_param stderr 1
+
+	if [ "$auto_fw" -eq 1 ]; then
+		procd_open_data
+		json_add_array firewall
+			json_add_object ""
+			json_add_string type rule
+			json_add_string name "Allow-crossdesk-server-tcp"
+			json_add_string proto "tcp"
+			json_add_string src "*"
+			json_add_string dest_port "$port"
+			json_add_string target "ACCEPT"
+			json_close_object
+		json_close_array
+		procd_close_data
+	fi
+	procd_close_instance
+}
+
+reload_service() {
+	restart
+}
+
+service_triggers() {
+	procd_add_reload_trigger "$CONF"
+}

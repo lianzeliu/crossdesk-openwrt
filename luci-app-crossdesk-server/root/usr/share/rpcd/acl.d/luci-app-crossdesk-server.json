@@ -1,0 +1,25 @@
+{
+	"luci-app-crossdesk-server": {
+		"description": "Grant UCI access for luci-app-crossdesk-server",
+		"read": {
+			"file": [
+				"exec",
+				"stat",
+				"read"
+			],
+			"ubus": {
+				"service": [
+					"list"
+				]
+			},
+			"uci": [
+				"crossdesk-server"
+			]
+		},
+		"write": {
+			"uci": [
+				"crossdesk-server"
+			]
+		}
+	}
+}

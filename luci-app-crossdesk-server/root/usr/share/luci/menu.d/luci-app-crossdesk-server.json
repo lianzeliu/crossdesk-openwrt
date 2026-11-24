@@ -1,0 +1,17 @@
+{
+	"admin/services/crossdesk-server": {
+		"action": {
+			"path": "crossdesk-server",
+			"type": "view"
+		},
+		"depends": {
+			"acl": [
+				"luci-app-crossdesk-server"
+			],
+			"uci": {
+				"crossdesk-server": true
+			}
+		},
+		"title": "CrossDesk Server"
+	}
+}
