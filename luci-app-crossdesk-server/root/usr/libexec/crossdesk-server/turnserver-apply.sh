@@ -52,11 +52,13 @@ resolve_ipv4() {
 		printf '%s' "$host"
 		return 0
 	fi
-	# busybox nslookup prints one "Address N: <ip>" line per answer
-	# (the first one is the DNS server itself, with extra text after
-	# the address, so the anchored pattern skips it). Take the last
-	# dotted-quad answer.
-	ip=$(nslookup "$host" 2>/dev/null | awk '/^Address [0-9]+: [0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/{ip=$3} END{print ip}')
+	# nslookup output varies by implementation:
+	#   busybox: "Address 1: 1.2.3.4"
+	#   bind-style: "Address: 115.219.164.116" (no number after Address)
+	# Match both forms; $NF is the address in either case. The
+	# "Server:" header line ("Address: 192.168.1.1:53") does not
+	# match because it ends with a port, not a bare dotted-quad.
+	ip=$(nslookup "$host" 2>/dev/null | awk '/^Address( [0-9]+)?: [0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/{ip=$NF} END{print ip}')
 	printf '%s' "$ip"
 }
 
