@@ -1,0 +1,19 @@
+#!/bin/sh
+# Restart the local coturn when the WAN interface comes up or its
+# address changes, so it (re)binds its listening sockets to the WAN
+# address. coturn binds its sockets at startup and does not pick up
+# an interface that appears later: if it was started while the WAN
+# was down, it only listens on LAN/loopback and internet clients
+# cannot reach it, so P2P stalls at "establishing connection".
+# OpenWrt hotplug: $INTERFACE is the interface name, $ACTION is
+# ifup / ifdown / ifupdate.
+[ "$INTERFACE" = "wan" ] || exit 0
+case "$ACTION" in
+	ifup|ifupdate) ;;
+	*) exit 0 ;;
+esac
+# Only when local coturn is in use and the service is enabled.
+[ "$(uci get crossdesk-server.turn.use_local 2>/dev/null)" = "1" ] || exit 0
+[ "$(uci get turnserver.general.enabled 2>/dev/null)" = "1" ] || exit 0
+/etc/init.d/turnserver restart
+logger -t crossdesk-server "WAN $ACTION: restarted local coturn so it listens on the WAN address."
